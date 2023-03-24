@@ -120,6 +120,7 @@ void            KBSendCmd(unsigned char, unsigned char);                        
 void            KBReqToSend(void);                                              //Generates request to send (start bit)to the keyboard
 void 		   	KBWriteByte(unsigned char);                           
 
+void KBCheckFlags(void);
 
 #endif	/* PS2KB_H */
 

@@ -90,11 +90,9 @@ int main(void){
    /*Main control loop                                 */
    /*--------------------------------------------------*/
    while(1){
-//      ClrWdt();
       
-//      if(kbCount && !KB_FLAG_L){
-//         KB_FLAG_L = 1;
-//      }
+//      ClrWdt();
+//      KB_FLAG_L = 1;
          
       if(scanFlag){                                                             //New scan code?
          scanFlag = 0;                                                          //Yes.. clear the flag
@@ -102,10 +100,8 @@ int main(void){
          if(scanCode == CAPS_S){                                                //Caps lock?         
             rtnCode =  SetCapsLock();     
          }
-         else{
-            KBConvertScanCode();                                                //Translate scan code and place on the buffer 
-         }
-         
+       
+         KBConvertScanCode();                                                   //Translate scan code and place on the buffer 
       }
    }
    return 0;

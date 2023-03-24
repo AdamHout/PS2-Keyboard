@@ -39,7 +39,7 @@
 /* high		   low		   Communication stalled                      */
 /* high		   high		   Idle                                       */
 /*----------------------------------------------------------------------------*/
-/* 01/2023 Adam Hout    -Original code                                        */
+/* 02/2023 Adam Hout    -Original code                                        */
 /*----------------------------------------------------------------------------*/
 #include "xc.h"
 #include "ps2kb.h"
@@ -58,11 +58,11 @@ volatile int           capsBreak = 0;                                           
 volatile int           shiftFlag = 0;                                           //Left or right shift key flag
 volatile int           breakCode = 0;                                           //Break code (0xF0) flag
 volatile unsigned char scanCode;                                                //Scan code from the keyboard
-volatile unsigned char lastCode;                                                //Previous scan code recorded
 
 int kbBitCnt;                                                                   //Bit counter for incoming scan codes
 int kbParity;                                                                   //Compute parity
 
+//Enums
 PS2STATES_t PS2State;                                                           //Current state of operation
 
 //FIFO buffer for translated output
@@ -133,11 +133,57 @@ void KBInit(void)
    IEC0bits.INT0IE = 1;                                                         //Enable external interrupt 0
 }
 
+void KBCheckFlags(void){
+   
+   static unsigned char prevCode;   
+   
+   
+   switch(scanCode){
+      case CAPS_S:
+         break;
+      case L_SHIFT_S:
+         break;
+      case R_SHIFT_S:
+         break;
+      case BREAK_S:
+         if(prevCode == CAPS_S)                                           //Was this a caps lock break code?
+            capsBreak = 1;                                                //Yes.. flag it
+         else
+            breakCode = 1;                                                //Treat as regular break code      
+         break;
+   }
+   
+   
+   if(scanCode == CAPS_S){                                                      //Caps lock?                
+   }
+   if(scanCode == BREAK_S){                                           //Don't want break codes
+      if(prevCode == CAPS_S)                                           //Was this a caps lock break code?
+         capsBreak = 1;                                                //Yes.. flag it
+      else
+         breakCode = 1;                                                //Treat as regular break code 
+   }
+   else if(scanCode == L_SHIFT_S || scanCode == R_SHIFT_S){            //Capture shift keys
+      if(breakCode){                                                   //Shift key released?
+         breakCode = 0;                                                //Yes.. clear the break flag
+         shiftFlag = 0;                                                //Clear the shift flag
+      }
+      else{
+         shiftFlag = 1;                                                //Set the flag
+      }
+   }
+   else if(breakCode){                                                //Don't want the byte following the break code either
+      breakCode = 0;
+   }
+   
+   prevCode = scanCode;    
+}
+
 /*----------------------------------------------------*/
 /*Convert incoming scan codes via the translate tables*/
 /*and store them in the circular output buffer        */
 /*----------------------------------------------------*/
 void KBConvertScanCode(){
+   
    
    //Return response bytes as is
    if(scanCode == KB_BAT || scanCode == KB_ECHO ||
@@ -329,19 +375,12 @@ void KBWriteByte(unsigned char Byte)
 /*------------------------------------------*/
 void __attribute ((interrupt, no_auto_psv)) _INT0Interrupt(void)
 {
-   TMR4 = 0;                                                                    //Reset timer on every clock edge
-
    switch (PS2State){	
       case PS2START:                                                            //Start state
-         if (!PS2DATA_P){
+         if (!PS2DATA_P){                                                       //Data pin low for the start bit  
             kbBitCnt = 8;                                                       //Init bit counter	
             kbParity = 0;                                                       //Init parity check
-            TMR4 = 0;
-            PR4 = PS2TO;                                                        //1.5ms @ 4MHz FCY
-            IFS1bits.T4IF = 0;                                                  //Clear timer 4 interrupt flag
-   //         IEC1bits.T4IE = 1;                                                  //Enable timer 4 interrupt
-            T4CON = 0x8000;                                                     //Enable TMR4; no prescaler
-            PS2State = PS2BIT;
+            PS2State = PS2BIT;                                                  //Bump to the next state
          }
          break;
          
@@ -364,39 +403,21 @@ void __attribute ((interrupt, no_auto_psv)) _INT0Interrupt(void)
          if (kbParity & 0x80)                                                   //Continue if parity is odd
             PS2State = PS2STOP;
          else
+            //set error
             PS2State = PS2START;
          break;
 
       case PS2STOP:                                                             //Stop state
          if (PS2DATA_P){
-            if (scanCode == BREAK_S){                                           //Don't want break codes
-               if(lastCode == CAPS_S)                                           //Was this a caps lock break code?
-                  capsBreak = 1;                                                //Yes.. flag it
-               else
-                  breakCode = 1;                                                //Treat as regular break code 
-            }
-            else if(scanCode == L_SHIFT_S || scanCode == R_SHIFT_S){            //Capture shift keys
-               if(breakCode){                                                   //Shift key released?
-                  breakCode = 0;                                                //Yes.. clear the break flag
-                  shiftFlag = 0;                                                //Clear the shift flag
-               }
-               else
-                  shiftFlag = 1;                                                //Set the flag
-            }
-            else if (breakCode){                                                //Don't want the byte following the break code either
-               breakCode = 0;
-            }
-            else{   
-               scanFlag = 1;
-            }
+            scanFlag = 1;
+            PS2State = PS2START;                                                   //Reset to start state
+            break;  
          }
-
-         T4CON = 0x0000;                                                        //Disable the timer
-         IEC1bits.T4IE = 0;                                                     //Disable the interrupt
-         PS2State = PS2START;                                                   //Reset to start state
-         break;
+         //else
+            //set error
 		
       default:
+         //set error
          PS2State = PS2START;
          break;
    }
@@ -404,15 +425,3 @@ void __attribute ((interrupt, no_auto_psv)) _INT0Interrupt(void)
    IFS0bits.INT0IF = 0;                                                         //Reset int0 flag	
    return;
 }
-
-///*------------------------------------------*/
-///* Timer 4 ISR                              */
-///*------------------------------------------*/
-//void __attribute ((interrupt, no_auto_psv)) _T4Interrupt(void)
-//{
-//	PS2State = PS2START;							                                       //Reset the state
-//	T4CON = 0;										                                       //Stop the timer
-//	IFS1bits.T4IF = 0;								                                    //Clear the interrupt flag
-//   IEC1bits.T4IE = 0;
-//	return;
-//}
