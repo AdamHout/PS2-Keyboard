@@ -1,14 +1,25 @@
-/*
- * File:   main.c
- * Author: adam
- *
- * Created on March 13, 2023, 10:32 PM
- */
-
+/*----------------------------------------------------------------------------*/
+/* Program Overview:                                                          */
+/* Act as an interface between a PS2 keyboard and a master controller         */
+/*----------------------------------------------------------------------------*/  
+/* MCU: PIC24FJ64GA002 FOSC = 32MHz FCY = 16MHz                               */
+/*----------------------------------------------------------------------------*/  
+/* Peripherals Used:                                                          */
+/* External interrupt 0 - PS2 clock line - interrupt on falling edge          */
+/* SPI1 - */
+/*----------------------------------------------------------------------------*/  
+/* External Devices:                                                          */
+/* PS2 keyboard                                                               */
+/*----------------------------------------------------------------------------*/  
+/* Pointers:                                                                  */
+/*        */
+/*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*--*-*-*/  
+/* Revisions:                                                                 */
+/*                                                                            */
+/* Date                         Comments                                      */
+/* 03/2023  Adam Hout           Original development                          */
+/*----------------------------------------------------------------------------*/  
 // PIC24FJ64GA002 Configuration Bit Settings
-
-// 'C' source line config statements
-
 // CONFIG2
 #pragma config POSCMOD = NONE                                                   // Primary Oscillator Select (Primary oscillator disabled)
 #pragma config I2C1SEL = PRI                                                    // I2C1 Pin Location Select (Use default SCL1/SDA1 pins)
@@ -49,42 +60,23 @@
 /*----------------------------------*/
 /*Globals from ps2kb.c              */
 /*----------------------------------*/
-extern volatile int   scanFlag;                                                 //=1 when new scan code received
-extern volatile int   capsFlag;                                                 //Caps lock flag
-extern volatile int   capsBreak;                                                //Caps key released
-extern volatile unsigned char scanCode;                                         //Last scan code recorded
-
-/*----------------------------------*/
-/* Function declarations            */
-/*----------------------------------*/
-int SetCapsLock(void);
-
-
+extern kbFlags_t xFlags, *pFlags;
 
 /*--------------------------------------------------------------*/
 /* Begin mainline processing                                    */
 /*--------------------------------------------------------------*/
 int main(void){
-   
-   unsigned char retryCnt = 0;                                                  //Used for echo
-   int rtnCode;
 
-   //Init
+   //Init notification pin
    KB_FLAG_A = 1;                                                               //Set flag pin to digital
    KB_FLAG_T = 0;                                                               //Set to output
    KB_FLAG_L = 0;                                                               //Set low; Active high
    
    //Initialize the keyboard interface
-   KBInit(); 
+   int rtnCode = kbInitialize(); 
    
-   do{
-      KBSendCmd(CMD_ECHO,NO_ARGS);                                              //Send an echo command
-      while(!scanFlag);                                                         //Wait for the keyboard to reply
-      scanFlag = 0;
-   }while(scanCode != CMD_ECHO && retryCnt++ < 3);
-   
-   //if(scanFlag != CMD_ECHO)
-   //   set error code
+   if(rtnCode)
+      pFlags->errFlag = 1;
    
    /*--------------------------------------------------*/
    /*Main control loop                                 */
@@ -92,40 +84,32 @@ int main(void){
    while(1){
       
 //      ClrWdt();
-//      KB_FLAG_L = 1;
+      
+//      if(pFlags->scanFlag){
+//         pFlags->scanFlag = 0;
+//         kbPostCode();
+//      }
          
-      if(scanFlag){                                                             //New scan code?
-         scanFlag = 0;                                                          //Yes.. clear the flag
-         
-         if(scanCode == CAPS_S){                                                //Caps lock?         
-            rtnCode =  SetCapsLock();     
+      //Process scan codes from the keyboard
+      if(pFlags->scanFlag){                                                     //New scan code?
+         pFlags->scanFlag = 0;                                                  //Clear the scan code flag 
+         kbCheckFlags();                                                        //Check for special conditions
+   
+         if(pFlags->breakFlag)                                                  //Discard break sequences                                                            
+            pFlags->breakFlag--;
+         else if(pFlags->skipFlag)                                              //Flagged to discard
+            pFlags->skipFlag = 0;
+         else if(pFlags->capsFlag || pFlags->numsFlag){                         //Caps or num lock sequence?
+            kbSetLocks();                                                       //Yes.. set/clear the lock
+            pFlags->capsFlag = 0;
+            pFlags->numsFlag = 0;
          }
-       
-         KBConvertScanCode();                                                   //Translate scan code and place on the buffer 
+         else{   
+            kbPostCode();                                                       //Translate scan code and add to the buffer
+            if(!KB_FLAG_L)                                                      //Notify the host
+               KB_FLAG_L = 1;
+         }              
       }
    }
-   return 0;
-}
-
-/*-----------------------------------------------------*/
-/* Functions / Subroutines                             */
-/*-----------------------------------------------------*/
-int SetCapsLock(void){
-   
-//   if(capsBreak){                                                      //Break sequence?
-//      capsBreak = 0;                                                   //Yes.. clear the flag
-      capsFlag = ~capsFlag;                                            //Toggle the caps lock flag
-//   }
-      
-   if(capsFlag)                                                     //Turning caps lock on?
-      KBSendCmd(CMD_SET_LED,ARG_CAPS);                              //Yes
-   else
-      KBSendCmd(CMD_SET_LED,ARG_NONE);                              //No, turn caps lock off
-               
-   while(!scanFlag);                                                //Wait for the KB to reply
-   scanFlag = 0;
-//      kbChar = KBGetChar();               
-//               if(kbchar != KB_ACK)                                             //Get a good ACK?
-//                  use enum list                           //No.. report it
    return 0;
 }

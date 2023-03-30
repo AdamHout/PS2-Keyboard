@@ -1,8 +1,5 @@
 /* 
  * File:   ps2kb.h
- * Author: adam
- *
- * Created on January 25, 2023, 11:08 PM
  */
 
 #ifndef PS2KB_H
@@ -20,12 +17,6 @@
 #define PS2CLOCK_T	TRISBbits.TRISB7                                            //Tris register control for PS2 clock line
 #define PS2CLOCK_L	LATBbits.LATB7                                              //Lat control for controling the clock line (command mode only)
 #define PS2CLOCK_P	PORTBbits.RB7                                               //External interrupt 0 for PS2 clock line
-
-//#define PS2START  	0                                                           //Start bit state
-//#define PS2BIT		1                                                           //Shift bit state
-//#define PS2PARITY	2                                                           //Parity bit state
-//#define PS2STOP		3                                                           //Stop bit state
-#define PS2TO       6000                                                        //Timeout period. 1.5ms @ FCY = 
 
 #define BUFSIZE     512                                                         //FIFO/circular buffer size in bytes
 
@@ -53,14 +44,15 @@
 #define F12			0x00                                                        //F12 function key (not defined at this time)
 
 //PS2 scan code constants
-#define BREAK_S     0XF0                                                        //Break code
-#define TAB_S       0x0D                                                        //Tab key						
-#define BKSP_S      0x66                                                        //Backspance key
-#define ENTER_S     0x5A                                                        //Enter key
-#define ESC_S       0x76                                                        //Escape key
+#define TAB_S       0x0D                                                        //Tab key	
 #define L_SHIFT_S   0x12                                                        //Left shift key
-#define R_SHIFT_S   0x59                                                        //Right shift key
 #define CAPS_S      0x58                                                        //Caps lock key
+#define R_SHIFT_S   0x59                                                        //Right shift key
+#define ENTER_S     0x5A                                                        //Enter key
+#define BKSP_S      0x66                                                        //Backspance key
+#define ESC_S       0x76                                                        //Escape key
+#define NUM_S       0x77                                                        //Num Lock key
+#define BREAK_S     0XF0                                                        //Break code
 
 //Keyboard commands
 #define CMD_ECHO     0xEE                                                       //Keyboard responds with echo (0xEE)
@@ -95,32 +87,59 @@
 #define KB_ERR  0xFF                                                            //Key detection error or internal buffer overrun
 
 /*----------------------------------------------------*/
-/* Typedefs                                           */
+/* Enumerations                                       */
 /*----------------------------------------------------*/
-typedef enum {PS2START,                                                         //Start bit
-              PS2BIT,                                                           //Data bit(s)
-              PS2PARITY,                                                        //Parity bit
-              PS2STOP} PS2STATES_t;                                             //Stop bit 
-                     
+typedef enum{
+    PS2START,                                                                   //Start bit
+    PS2BIT,                                                                     //Data bit(s)
+    PS2PARITY,                                                                  //Parity bit
+    PS2STOP                                                                     //Stop bit 
+}ps2States_t;       
+
+typedef enum {
+    ERR_NONE = 0x00,
+    ERR_ECHO = 0xE0,                                                            //Echo failed
+    ERR_INV_STATE,                                                              //Invalid machine state
+    ERR_PARITY,                                                                 //Invalid scan code parity
+    ERR_STOP,                                                                   //Invalid stop bit
+    ERR_OVERFLOW,                                                               //Buffer overflow
+    ERR_LCK_NOACK                                                               //setLocks() - no ack from keyboard
+            
+}kbErrors_t;
+    
+/*----------------------------------------------------*/
+/* Structures                                         */
+/*----------------------------------------------------*/
 typedef struct{                                                                 //FIFO queue typedef
     int head;                                                                   //Head subscript
     int tail;                                                                   //Tail subscript
-    int count;                                                                  //queued item count
+    int count;                                                                  //Queued item count
     unsigned char buffer[BUFSIZE]; 
 }queue_t;
+
+typedef struct{
+    unsigned int scanFlag:  1;                                                  //Scan code flag
+    unsigned int capsFlag:  1;                                                  //Caps lock flag
+    unsigned int numsFlag:  1;                                                  //Nums lock flag
+    unsigned int skipFlag:  1;                                                  //Flag to ignore this scan code
+    unsigned int shiftFlag: 1;                                                  //Left or right shift key flag
+    unsigned int breakFlag: 3;                                                  //Break code (0xF0) flag
+    
+    unsigned int errFlag:   1;                                                  //Error flag
+    unsigned int spares:    7;
+}kbFlags_t;
 
 /*----------------------------------------------------*/
 /* Function declarations                              */
 /*----------------------------------------------------*/
-void			KBInit(void);                                                   //Init INT0 and I/O
-unsigned char   KBGetChar(void);                                                //Pulls the next scan code from the buffer and converts to ASCII
-unsigned char   KBPeek(void);                                                   //Returns last scan code received w/o altering the buffer
-void            KBConvertScanCode(void);                                        //Translate scan codes via the lookup table
-void            KBSendCmd(unsigned char, unsigned char);                        //Send command to KB
-void            KBReqToSend(void);                                              //Generates request to send (start bit)to the keyboard
-void 		   	KBWriteByte(unsigned char);                           
-
-void KBCheckFlags(void);
+void            kbCheckFlags(void);
+int             kbEcho(void);                                                   //Send an echo command to the keyboard
+int             kbInitialize(void);                                             //Init INT0 and I/O
+void            kbPostCode(void);                                               //Translate and post scan codes
+void            kbReqToSend(void);                                              //Generates request to send (start bit)to the keyboard
+void            kbSendCmd(unsigned char, unsigned char);                        //Send commands to the keyboard
+void            kbSetLocks(void);
+void 		   	kbWriteByte(unsigned char);                           
 
 #endif	/* PS2KB_H */
 

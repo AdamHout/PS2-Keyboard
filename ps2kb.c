@@ -1,21 +1,19 @@
 
 /*----------------------------------------------------------------------------*/
-/* Interface to a PS2 keyboard via an input capture module                    */
+/* Interface to a PS2 keyboard via an external interrupt                      */
 /*                                                                            */
 /* Resources Used:                                                            */
 /* -External Interrupt 0                                                      */
-/* -Timer 4                                                                   */
-/* -Two 5V tolerant IO pins                                                   */
+/* -5V tolerant IO pin                                                        */
 /*                                                                            */
 /* Summary:                                                                   */
-/* Keyboard runs at 5V with open collector pull-up resistors.                 */            
+/* Keyboard runs at 5V with open collector pull-up resistors. The MCU data    */            
+/* and clock pins are configured as an open drain output and can still be    */
+/* read as inputs. No need for direction control                              */
 /*                                                                            */
 /* PS2 clock line will be connected to external interrupt 0. PS2 data line    */
 /* is connected to a 5V (digital) tolerant GPIO pin. Ext Int0 will trigger    */
 /* on the falling edge of the clock line. Data is valid when clock is low.    */
-/*                                                                            */
-/* Timer 4 is used for a timeout period and will reset the state back to      */
-/* START whenever it's ISR is entered                                         */
 /*                                                                            */
 /* In order to send a command to the keyboard, the clock line must first be   */
 /* pulled low for a minimum of 100us. Then the data line is pulled low and the*/
@@ -24,7 +22,7 @@
 /* invalid command, it responds with a "resend" (0xFE)                        */
 /*                                                                            */
 /* Data sent from the device to the host is read on the falling edge of the   */ 
-/* clock signal; data sent from the host to the device is read on the rising  */
+/* clock signal. Data sent from the host to the device is read on the rising  */
 /* edge                                                                       */
 /*                                                                            */
 /* At power on or after a software reset, the keyboard runs it's Basic        */
@@ -39,7 +37,7 @@
 /* high		   low		   Communication stalled                      */
 /* high		   high		   Idle                                       */
 /*----------------------------------------------------------------------------*/
-/* 02/2023 Adam Hout    -Original code                                        */
+/* 03/2023 Adam Hout    -Original code                                        */
 /*----------------------------------------------------------------------------*/
 #include "xc.h"
 #include "ps2kb.h"
@@ -52,22 +50,22 @@
 /*------------------------------------------*/
 /* Global variables                         */
 /*------------------------------------------*/
-volatile int           scanFlag = 0;                                            //=1 when a new scan code is received
-volatile int           capsFlag = 0;                                            //Caps lock flag
-volatile int           capsBreak = 0;                                           //Caps key released
-volatile int           shiftFlag = 0;                                           //Left or right shift key flag
-volatile int           breakCode = 0;                                           //Break code (0xF0) flag
 volatile unsigned char scanCode;                                                //Scan code from the keyboard
 
+int capsLock = 0;                                                               //Caps lock status; 1 = On
+int numsLock = 0;
 int kbBitCnt;                                                                   //Bit counter for incoming scan codes
 int kbParity;                                                                   //Compute parity
 
-//Enums
-PS2STATES_t PS2State;                                                           //Current state of operation
-
 //FIFO buffer for translated output
-queue_t xOutBuf, *pOutBuf;                                                     
+queue_t xOutBuf, *pOutBuf; 
 
+//Keyboard flags
+kbFlags_t xFlags, *pFlags;
+
+//Enums
+ps2States_t ps2State;                                                           //Current state of operation
+kbErrors_t  kbError;                                                            //Keyboard errors
 
 //PS2 scan code lookup tables
 const char ScanCodes[128] = {0,F9,0,F5,F1,F3,F2,F12,
@@ -87,7 +85,6 @@ const char ScanCodes[128] = {0,F9,0,F5,F1,F3,F2,F12,
                              0,'.','2','5','6','8',ESC,NUMLOCK,
                              F11,'+','3','-','*','9',0,0};
 
-
 const char ShiftScanCodes[128] = {0,F9,0,F5,F1,F3,F2,F12,
                                   0,F10,F8,F6,F4,TAB,'~',0,
                                   0,0,L_SHIFT,0,L_CTRL,'Q','!',0,
@@ -105,20 +102,19 @@ const char ShiftScanCodes[128] = {0,F9,0,F5,F1,F3,F2,F12,
                                   0,'.','2','5','6','8',ESC,NUMLOCK,
                                   F11,'+','3','-','*','9',0,0};
 
-
 /*------------------------------------------*/
-/* Initialize input capture for the keyboard*/
+/* Setup the keyboard                       */
 /*------------------------------------------*/
-void KBInit(void)
-{
+int kbInitialize(void){
+   
    //Init the PS2 data and clock pins
    PS2DATA_D = 1;                                                               //Set PS2 data pin to open drain
    PS2DATA_T = 0;                                                               //Set PS2 data pin to output (input can still be read)
-   PS2DATA_L = 1;                                                               //Allow clock line to go high
+   PS2DATA_L = 1;                                                               //Allow data line to go high
    PS2CLOCK_D = 1;                                                              //Set PS2 clock line to open drain
    PS2CLOCK_T = 0;                                                              //Set PS2 clock pin to output (input can still be read)
    PS2CLOCK_L = 1;                                                              //Allow clock line to pull up
-   PS2State = PS2START;                                                         //Set the machine state
+   ps2State = PS2START;                                                         //Set the machine state
    
    //Setup circular buffer for translated characters   
    pOutBuf = &xOutBuf;                                                          //Ref character queue
@@ -126,64 +122,75 @@ void KBInit(void)
    pOutBuf->tail = 0;
    pOutBuf->count = 0;
    memset(&pOutBuf->buffer,0x00,BUFSIZE);
+   
+   //Setup the keyboard flags structure 
+   pFlags = &xFlags;
+   memset(pFlags,0x00,sizeof(xFlags));
  
    //External interrupt 0 connected to PS2 KB clock pin
    INTCON2bits.INT0EP = 1;                                                      //Interrupt on falling edge
    IFS0bits.INT0IF = 0;                                                         //Clear Ext Int 0 interrupt flag
    IEC0bits.INT0IE = 1;                                                         //Enable external interrupt 0
+   
+   //Send an echo to the keyboard
+   return kbEcho();
 }
 
-void KBCheckFlags(void){
+void kbCheckFlags(void){
    
-   static unsigned char prevCode;   
+   static unsigned char prevCode=0;                                             //Previous scan code
    
-   
-   switch(scanCode){
-      case CAPS_S:
-         break;
-      case L_SHIFT_S:
-         break;
-      case R_SHIFT_S:
-         break;
-      case BREAK_S:
-         if(prevCode == CAPS_S)                                           //Was this a caps lock break code?
-            capsBreak = 1;                                                //Yes.. flag it
-         else
-            breakCode = 1;                                                //Treat as regular break code      
-         break;
-   }
-   
-   
-   if(scanCode == CAPS_S){                                                      //Caps lock?                
-   }
-   if(scanCode == BREAK_S){                                           //Don't want break codes
-      if(prevCode == CAPS_S)                                           //Was this a caps lock break code?
-         capsBreak = 1;                                                //Yes.. flag it
-      else
-         breakCode = 1;                                                //Treat as regular break code 
-   }
-   else if(scanCode == L_SHIFT_S || scanCode == R_SHIFT_S){            //Capture shift keys
-      if(breakCode){                                                   //Shift key released?
-         breakCode = 0;                                                //Yes.. clear the break flag
-         shiftFlag = 0;                                                //Clear the shift flag
-      }
+   if(scanCode == CAPS_S || scanCode == NUM_S)                                  //Caps or num lock?
+      pFlags->skipFlag = 1;                                                     //Yes.. set it on the break
+   else if(scanCode == L_SHIFT_S|| scanCode == R_SHIFT_S){                      //Shift key?
+      if(pFlags->breakFlag)                                                     //Break sequence?
+         pFlags->shiftFlag = 0;                                                 //Yes.. clear the shift flag
       else{
-         shiftFlag = 1;                                                //Set the flag
+         pFlags->shiftFlag = 1;                                              
+         pFlags->skipFlag = 1;                                                  //Discard this code
       }
    }
-   else if(breakCode){                                                //Don't want the byte following the break code either
-      breakCode = 0;
+   else if(scanCode == BREAK_S){                                                //Break code?
+      if(prevCode == CAPS_S)                                                    //Caps lock break sequence?
+         pFlags->capsFlag = 1;                                                          //Yes.. set its flag
+      else if(prevCode == NUM_S)
+         pFlags->numsFlag = 1;
+      else
+         pFlags->breakFlag = 2;                                                         //Discard the break sequence
    }
    
-   prevCode = scanCode;    
+   prevCode = scanCode;                                                         //Save this scan code to compare to the next one
+}
+
+void kbSetLocks(void){
+   
+   if(pFlags->capsFlag)                                                         //Toggle the appropriate lock
+      capsLock = ~capsLock;                                                     
+   else
+      numsLock = ~numsLock;
+      
+   if(capsLock && numsLock)                                                     //Caps and Nums lock?
+      kbSendCmd(CMD_SET_LED,ARG_CAP_NUM);
+   else if(capsLock)                                                            //Just caps lock
+      kbSendCmd(CMD_SET_LED,ARG_CAPS);                              
+   else if(numsLock)                                                            //Just nums lock
+      kbSendCmd(CMD_SET_LED,ARG_NUM);
+   else
+      kbSendCmd(CMD_SET_LED,ARG_NONE);                                          //All led's off
+               
+   while(!pFlags->scanFlag);                                                    //Wait for the KB to ACK
+   pFlags->scanFlag = 0;
+   if(scanCode != KB_ACK){
+      kbError = ERR_LCK_NOACK;
+      pFlags->errFlag = 1;
+   }     
 }
 
 /*----------------------------------------------------*/
 /*Convert incoming scan codes via the translate tables*/
 /*and store them in the circular output buffer        */
 /*----------------------------------------------------*/
-void KBConvertScanCode(){
-   
+void kbPostCode(void){
    
    //Return response bytes as is
    if(scanCode == KB_BAT || scanCode == KB_ECHO ||
@@ -194,79 +201,26 @@ void KBConvertScanCode(){
       pOutBuf->buffer[pOutBuf->head++] = scanCode;                              //No conversion
    }
    else{   
-      if (shiftFlag)                                                            //Shift key prior code sent?
+      if (pFlags->shiftFlag)                                                    //Shift key prior code sent?
          pOutBuf->buffer[pOutBuf->head++] = ShiftScanCodes[scanCode % 128];     //Yes.. use shift table
       else{									
          pOutBuf->buffer[pOutBuf->head++] = ScanCodes[scanCode % 128];          //Otherwise use standard table
 
-         if (capsFlag && pOutBuf->buffer[pOutBuf->head] >= 'a' 
+         if (capsLock && pOutBuf->buffer[pOutBuf->head] >= 'a' 
             && pOutBuf->buffer[pOutBuf->head] <= 'z')
              pOutBuf->buffer[pOutBuf->head] = 
                                 toupper(pOutBuf->buffer[pOutBuf->head]);        //Caps lock on, convert to upper case
       }
       
-      pOutBuf->head %= BUFSIZE;
       pOutBuf->count++;
+      pOutBuf->head %= BUFSIZE;
+      if(pOutBuf->head == pOutBuf->tail){
+         kbError = ERR_OVERFLOW;
+         pFlags->errFlag =1;
+      }
    }
 }
 
-/*----------------------------------------------------*/
-/*----------------------------------------------------*/
-unsigned char KBGetChar(void){
-   
-   unsigned char rtnChr;
-   
-   rtnChr = 'x';
-   
-//   if (kbBufTail == kbBufHead)                                                  //Anything to return?
-//      return 0;
-
-//   ScanCode = kbScanBuf[kbBufTail++];                                            //Copy out the first scan code
-//   kbBufTail %= BUFSIZE;                                                        //Wrap around if needed
-   
-   
-   return rtnChr;   
-   
-}
-
-/*-------------------------------------------------------------------*/
-/*Return the last keyboard char received without altering the buffer */
-/*-------------------------------------------------------------------*/
-unsigned char KBPeek(){
-   
-   unsigned char rtnChr;
-   
-   
-   rtnChr = 'x';
-   
-//   if (kbBufTail == kbBufHead)                                                  //Anything to return?
-//      return 0;
-//
-//   if(kbBufHead > 0)                                                            //Check for first array element
-//      ScanCode = kbScanBuf[kbBufHead-1];                                         //Beyond.. can back up one
-//   else                                                                         //Head = element 0
-//      ScanCode = kbScanBuf[BUFSIZE-1];                                           //Copy out the last array element
-//   
-//   //Return response bytes as is
-//   if(ScanCode == KB_BAT || ScanCode == KB_ECHO ||
-//      ScanCode == KB_ACK || ScanCode == KB_FAIL ||
-//      ScanCode == KB_FL2 || ScanCode == KB_RSND ||
-//      ScanCode == KB_ERR)
-//   {
-//      return ScanCode;                                                          //No conversion
-//   }
-//      
-//   if (ShiftFlag)                                                               //Shift key prior code sent?
-//      RtnChr = ShiftScanCodes[ScanCode % 128];                                  //Yes.. use shift table
-//   else{									
-//      RtnChr = ScanCodes[ScanCode % 128];                                       //Otherwise use standard table
-//
-//      if (CapsFlag && RtnChr >= 'a' && RtnChr <= 'z')
-//         RtnChr = toupper(RtnChr);                                              //Caps lock on, convert to upper case
-//   }
-   
-   return rtnChr;
-}
 /*---------------------------------------------------------------------*/
 //         Send passed command to the keyboard     
 //1)   Bring the Clock line low for at least 100 microseconds.
@@ -282,16 +236,16 @@ unsigned char KBPeek(){
 //11) Wait for the device to bring Clock  low.
 //12) Wait for the device to release Data and Clock
 /*---------------------------------------------------------------------*/
-void KBSendCmd(unsigned char cmd, unsigned char arg)
+void kbSendCmd(unsigned char cmd, unsigned char arg)
 {
    
    IEC0bits.INT0IE = 0;                                                         //Disable external Int0 while in command mode
-   KBReqToSend();
-   KBWriteByte(cmd);                                                            //Send passed command to the keyboard
+   kbReqToSend();
+   kbWriteByte(cmd);                                                            //Send passed command to the keyboard
 
-   if (arg != NO_ARGS){                                                         //Send the command argument if one was passed. 0xFF indicates no ARG
-      KBReqToSend();
-      KBWriteByte(arg);
+   if (arg != NO_ARGS){                                                         //Send the command argument. 0xFF indicates no ARG
+      kbReqToSend();
+      kbWriteByte(arg);
    }                                 
       
    IFS0bits.INT0IF = 0; 
@@ -301,7 +255,7 @@ void KBSendCmd(unsigned char cmd, unsigned char arg)
 /*------------------------------------------*/
 /* Initiates a write to the keyboard        */
 /*------------------------------------------*/
-void KBReqToSend(){
+void kbReqToSend(){
    PS2CLOCK_L = 0;                                                              //Clock line needs pulled low for a minimum of 100us 
    __delay_us(100);                                                             
    PS2DATA_L = 0;                                                               //Pull data line low (start bit)
@@ -313,7 +267,7 @@ void KBReqToSend(){
 /* Send a byte to the keyboard (only used   */
 /* by command function                      */
 /*------------------------------------------*/
-void KBWriteByte(unsigned char Byte)
+void kbWriteByte(unsigned char Byte)
 {
    int ctr;
    int parity=0;                                             
@@ -367,6 +321,21 @@ void KBWriteByte(unsigned char Byte)
    while (!PS2DATA_P);                                                          //Wait for the keyboard to release the data line high
    return;
 }
+int kbEcho(void){
+   
+   unsigned char retryCnt = 0;                                                  
+   
+   do{
+      kbSendCmd(CMD_ECHO,NO_ARGS);                                              //Send an echo command
+      while(!pFlags->scanFlag);                                                         //Wait for the keyboard to reply
+      pFlags->scanFlag = 0;                                                             //Clear the flag
+   }while(scanCode != CMD_ECHO && retryCnt++ < 3);                              //Up to three attempts
+   
+   if(scanCode != CMD_ECHO)                                                     //Success?
+      return ERR_ECHO;                                                          //No, set error code
+   else 
+      return ERR_NONE;                                                          //Echo passed
+}
 
 /*------------------------------------------*/
 /* External Interrupt 0 ISR (PS2 Clock pin) */
@@ -375,12 +344,12 @@ void KBWriteByte(unsigned char Byte)
 /*------------------------------------------*/
 void __attribute ((interrupt, no_auto_psv)) _INT0Interrupt(void)
 {
-   switch (PS2State){	
+   switch (ps2State){	
       case PS2START:                                                            //Start state
          if (!PS2DATA_P){                                                       //Data pin low for the start bit  
             kbBitCnt = 8;                                                       //Init bit counter	
             kbParity = 0;                                                       //Init parity check
-            PS2State = PS2BIT;                                                  //Bump to the next state
+            ps2State = PS2BIT;                                                  //Bump to the next state
          }
          break;
          
@@ -393,7 +362,7 @@ void __attribute ((interrupt, no_auto_psv)) _INT0Interrupt(void)
          kbParity ^= scanCode;                                                  //Update parity
 			
          if (--kbBitCnt == 0)                                                   //If all scan code bits read
-            PS2State = PS2PARITY;                                               //Change state to parity
+            ps2State = PS2PARITY;                                               //Change state to parity
          break;
       
       case PS2PARITY:                                                           //Parity state
@@ -401,24 +370,29 @@ void __attribute ((interrupt, no_auto_psv)) _INT0Interrupt(void)
             kbParity ^= 0x80;					
 
          if (kbParity & 0x80)                                                   //Continue if parity is odd
-            PS2State = PS2STOP;
-         else
-            //set error
-            PS2State = PS2START;
+            ps2State = PS2STOP;
+         else{
+            kbError = ERR_PARITY;                                               //Set parity error
+            pFlags->errFlag = 1;                                                //Flag it  
+            ps2State = PS2START;
+         }
          break;
 
       case PS2STOP:                                                             //Stop state
-         if (PS2DATA_P){
-            scanFlag = 1;
-            PS2State = PS2START;                                                   //Reset to start state
+         if (PS2DATA_P){                                                        //Stop bit?
+            pFlags->scanFlag = 1;                                               //Good scan code
+            ps2State = PS2START;                                                //Reset to start state
             break;  
          }
-         //else
-            //set error
+         else{                                                                  //Invalid stop bit
+            kbError = ERR_STOP;
+            pFlags->errFlag = 1;
+         }
 		
       default:
-         //set error
-         PS2State = PS2START;
+         kbError = ERR_INV_STATE;                                               //Should not get here
+         pFlags->errFlag = 1;
+         ps2State = PS2START;
          break;
    }
 
