@@ -6,10 +6,10 @@
 /*----------------------------------------------------------------------------*/  
 /* Peripherals Used:                                                          */
 /* External interrupt 0 - PS2 clock line - interrupt on falling edge          */
-/* SPI1 - */
+/* SPI1 - Connection to the host                                              */
 /*----------------------------------------------------------------------------*/  
 /* External Devices:                                                          */
-/* PS2 keyboard                                                               */
+/* PS2 keyboard - Rosewill F21SG                                              */
 /*----------------------------------------------------------------------------*/  
 /* Pointers:                                                                  */
 /*        */
@@ -19,11 +19,12 @@
 /* Date                         Comments                                      */
 /* 03/2023  Adam Hout           Original development                          */
 /*----------------------------------------------------------------------------*/  
+
 // PIC24FJ64GA002 Configuration Bit Settings
 // CONFIG2
 #pragma config POSCMOD = NONE                                                   // Primary Oscillator Select (Primary oscillator disabled)
 #pragma config I2C1SEL = PRI                                                    // I2C1 Pin Location Select (Use default SCL1/SDA1 pins)
-#pragma config IOL1WAY = ON                                                     // IOLOCK Protection (Once IOLOCK is set, cannot be changed)
+#pragma config IOL1WAY = OFF                                                    // IOLOCK Protection (IOLOCK may be changed via unlocking seq)
 #pragma config OSCIOFNC = ON                                                    // Primary Oscillator Output Function (OSC2/CLKO/RC15 functions as port I/O (RC15))
 #pragma config FCKSM = CSDCMD                                                   // Clock Switching and Monitor (Clock switching and Fail-Safe Clock Monitor are disabled)
 #pragma config FNOSC = FRCPLL                                                   // Oscillator Select (Fast RC Oscillator with PLL module)
@@ -66,14 +67,14 @@ extern kbFlags_t xFlags, *pFlags;
 /* Begin mainline processing                                    */
 /*--------------------------------------------------------------*/
 int main(void){
-
+   
    //Init notification pin
    KB_FLAG_A = 1;                                                               //Set flag pin to digital
    KB_FLAG_T = 0;                                                               //Set to output
    KB_FLAG_L = 0;                                                               //Set low; Active high
    
    //Initialize the keyboard interface
-   int rtnCode = kbInitialize(); 
+   int16_t rtnCode = kbInitialize(); 
    
    if(rtnCode)
       pFlags->errFlag = 1;
@@ -84,11 +85,6 @@ int main(void){
    while(1){
       
 //      ClrWdt();
-      
-//      if(pFlags->scanFlag){
-//         pFlags->scanFlag = 0;
-//         kbPostCode();
-//      }
          
       //Process scan codes from the keyboard
       if(pFlags->scanFlag){                                                     //New scan code?

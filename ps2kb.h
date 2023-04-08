@@ -111,22 +111,22 @@ typedef enum {
 /* Structures                                         */
 /*----------------------------------------------------*/
 typedef struct{                                                                 //FIFO queue typedef
-    int head;                                                                   //Head subscript
-    int tail;                                                                   //Tail subscript
-    int count;                                                                  //Queued item count
-    unsigned char buffer[BUFSIZE]; 
+    int16_t head;                                                               //Head subscript
+    int16_t tail;                                                               //Tail subscript
+    int16_t count;                                                              //Queued item count
+    uint8_t buffer[BUFSIZE]; 
 }queue_t;
 
 typedef struct{
-    unsigned int scanFlag:  1;                                                  //Scan code flag
-    unsigned int capsFlag:  1;                                                  //Caps lock flag
-    unsigned int numsFlag:  1;                                                  //Nums lock flag
-    unsigned int skipFlag:  1;                                                  //Flag to ignore this scan code
-    unsigned int shiftFlag: 1;                                                  //Left or right shift key flag
-    unsigned int breakFlag: 3;                                                  //Break code (0xF0) flag
+    uint16_t scanFlag:  1;                                                      //Scan code flag
+    uint16_t capsFlag:  1;                                                      //Caps lock flag
+    uint16_t numsFlag:  1;                                                      //Nums lock flag
+    uint16_t skipFlag:  1;                                                      //Flag to ignore this scan code
+    uint16_t shiftFlag: 1;                                                      //Left or right shift key flag
+    uint16_t breakFlag: 3;                                                      //Break code (0xF0) flag
     
-    unsigned int errFlag:   1;                                                  //Error flag
-    unsigned int spares:    7;
+    uint16_t errFlag:   1;                                                      //Error flag
+    uint16_t spares:    7;
 }kbFlags_t;
 
 /*----------------------------------------------------*/
@@ -137,9 +137,9 @@ int             kbEcho(void);                                                   
 int             kbInitialize(void);                                             //Init INT0 and I/O
 void            kbPostCode(void);                                               //Translate and post scan codes
 void            kbReqToSend(void);                                              //Generates request to send (start bit)to the keyboard
-void            kbSendCmd(unsigned char, unsigned char);                        //Send commands to the keyboard
+void            kbSendCmd(uint8_t, uint8_t);                                    //Send commands to the keyboard
 void            kbSetLocks(void);
-void 		   	kbWriteByte(unsigned char);                           
+void 		   	kbWriteByte(uint8_t);                           
 
 #endif	/* PS2KB_H */
 
