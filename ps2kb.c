@@ -204,12 +204,12 @@ void kbPostCode(void){
       if (pFlags->shiftFlag)                                                    //Shift key prior code sent?
          pOutBuf->buffer[pOutBuf->head++] = ShiftScanCodes[scanCode % 128];     //Yes.. use shift table
       else{									
-         pOutBuf->buffer[pOutBuf->head++] = ScanCodes[scanCode % 128];            //Otherwise use standard table
+         pOutBuf->buffer[pOutBuf->head++] = ScanCodes[scanCode % 128];          //Otherwise use standard table
 
          if (capsLock && pOutBuf->buffer[pOutBuf->count] >= 'a' 
             && pOutBuf->buffer[pOutBuf->count] <= 'z')
              pOutBuf->buffer[pOutBuf->count] = 
-                                toupper(pOutBuf->buffer[pOutBuf->count]);        //Caps lock on, convert to upper case
+                                toupper(pOutBuf->buffer[pOutBuf->count]);       //Caps lock on, convert to upper case
       }
    }
 

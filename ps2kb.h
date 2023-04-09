@@ -142,4 +142,3 @@ void            kbSetLocks(void);
 void 		   	kbWriteByte(uint8_t);                           
 
 #endif	/* PS2KB_H */
-
