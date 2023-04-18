@@ -52,10 +52,10 @@
 /*------------------------------------------*/
 volatile unsigned char scanCode;                                                //Scan code from the keyboard
 
-uint8_t capsLock = 0;                                                               //Caps lock status; 1 = On
+uint8_t capsLock = 0;                                                           //Caps lock status; 1 = On
 uint8_t numsLock = 0;
-uint8_t kbBitCnt;                                                                   //Bit counter for incoming scan codes
-uint8_t kbParity;                                                                   //Compute parity
+uint8_t kbBitCnt;                                                               //Bit counter for incoming scan codes
+uint8_t kbParity;                                                               //Compute parity
 
 //FIFO buffer for translated output
 queue_t xOutBuf, *pOutBuf; 
