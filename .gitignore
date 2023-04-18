@@ -1,0 +1,7 @@
+.elf
+Makefile
+build/
+disassembly/
+dist/
+nbproject/
+.generated_files/
