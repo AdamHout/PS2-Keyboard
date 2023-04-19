@@ -50,6 +50,7 @@
 #include "xc.h"
 #include "ps2kb.h"
 #include "sys.h"
+#include "sup.h"
 
 /*----------------------------------*/
 /* Defines                          */
@@ -78,6 +79,8 @@ int main(void){
    
    if(rtnCode)
       pFlags->errFlag = 1;
+   
+   SetUnusedPins();                                                             //Make digital and drive low                                                                       
    
    /*--------------------------------------------------*/
    /*Main control loop                                 */
